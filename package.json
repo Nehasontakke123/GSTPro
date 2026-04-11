@@ -1,0 +1,11 @@
+{
+  "name": "gst-reconciliation-system-pro",
+  "version": "1.0.0",
+  "description": "Full-stack MERN GST Reconciliation System",
+  "scripts": {
+    "backend": "cd backend && npm run dev",
+    "frontend": "cd frontend && npm run dev",
+    "seed": "cd backend && npm run seed",
+    "install:all": "cd backend && npm install && cd ../frontend && npm install"
+  }
+}
