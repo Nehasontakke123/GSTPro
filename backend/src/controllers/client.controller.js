@@ -42,14 +42,19 @@ export const uploadPurchase = async (req, res, next) => {
       return next(new AppError('File is empty or has no valid data rows', 400));
     }
 
-    const records = rows
-      .map(row => mapToPurchase(row))
-      .filter(r => r.gstin && r.invoiceNumber)
-      .map(r => ({ ...r, uploadId, uploadedBy: req.user.id }));
+    if (process.env.NODE_ENV === 'development') {
+      console.log('Purchase CSV Headers:', Object.keys(rows[0] || {}));
+    }
+
+    const mappedRows = rows.map((row) => mapToPurchase(row));
+    const validRows = mappedRows.filter((record) => record.gstin && record.invoiceNumber);
+    const invalidRows = mappedRows.length - validRows.length;
+    const records = validRows.map((record) => ({ ...record, uploadId, uploadedBy: req.user.id }));
 
     if (records.length === 0) {
+      const availableColumns = Object.keys(rows[0] || {}).join(', ');
       deleteFile(filePath);
-      return next(new AppError('No valid purchase records found. Ensure columns include GSTIN and Invoice Number.', 400));
+      return next(new AppError(`No valid purchase records found. Ensure columns include GSTIN and Invoice Number. Parsed columns: ${availableColumns || 'none'}`, 400));
     }
 
     await PurchaseRecord.insertMany(records, { ordered: false });
@@ -63,6 +68,8 @@ export const uploadPurchase = async (req, res, next) => {
       success: true,
       message: 'Purchase data uploaded and reconciliation completed',
       uploadId,
+      parsedRows: rows.length,
+      skippedRows: invalidRows,
       totalRecords: records.length,
       fileName: req.file.originalname,
       reconciliation
@@ -167,7 +174,13 @@ export const getGSTR2BBatches = async (req, res, next) => {
       { $limit: 20 }
     ]);
 
-    res.status(200).json({ success: true, count: batches.length, data: batches });
+    const data = batches.map((batch) => ({
+      ...batch,
+      id: batch.uploadId,
+      name: `${batch.returnPeriod || 'No period'} - ${batch.totalRecords} records - ${new Date(batch.createdAt).toLocaleDateString('en-IN')}`
+    }));
+
+    res.status(200).json({ success: true, count: data.length, data });
   } catch (error) {
     next(error);
   }

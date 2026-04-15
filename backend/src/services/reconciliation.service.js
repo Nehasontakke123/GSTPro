@@ -3,6 +3,11 @@ import GSTR2BRecord from '../models/GSTR2B.model.js';
 import PurchaseRecord from '../models/PurchaseRecord.model.js';
 import ReconciliationResult from '../models/ReconciliationResult.model.js';
 
+const getMatchKey = (record) => {
+  const partyGstin = record.supplierGstin || record.gstin || '';
+  return `${partyGstin}::${record.invoiceNumber || ''}`;
+};
+
 const AMOUNT_TOLERANCE = 1; // ₹1 tolerance for floating point differences
 
 /**
@@ -27,11 +32,11 @@ export const reconcileRecords = async (purchaseUploadId, gstr2bUploadId, userId,
     // Fetch all purchase records for this upload
     const purchaseRecords = await PurchaseRecord.find({ uploadId: purchaseUploadId });
 
-    // Build a lookup map from GSTR2B records keyed by "GSTIN::INVOICE_NUMBER"
+    // Build a lookup map from GSTR2B records keyed by supplier/party GSTIN + invoice number.
     const gstr2bRecords = await GSTR2BRecord.find({ uploadId: gstr2bUploadId });
     const gstr2bMap = new Map();
     for (const rec of gstr2bRecords) {
-      const key = `${rec.gstin}::${rec.invoiceNumber}`;
+      const key = getMatchKey(rec);
       gstr2bMap.set(key, rec);
     }
 
@@ -39,7 +44,7 @@ export const reconcileRecords = async (purchaseUploadId, gstr2bUploadId, userId,
     const unmatchedRecords = [];
 
     for (const purchase of purchaseRecords) {
-      const key = `${purchase.gstin}::${purchase.invoiceNumber}`;
+      const key = getMatchKey(purchase);
       const gstr2bMatch = gstr2bMap.get(key);
 
       if (!gstr2bMatch) {

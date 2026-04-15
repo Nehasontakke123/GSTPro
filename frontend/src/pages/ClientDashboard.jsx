@@ -36,8 +36,15 @@ export default function ClientDashboard() {
         api.get('/client/gstr2b-batches'),
         api.get('/client/results')
       ]);
-      setBatches(batchRes.data.data || []);
+      const nextBatches = batchRes.data.data || [];
+      setBatches(nextBatches);
       setResults(resultsRes.data.data || []);
+      setSelectedBatch((current) => {
+        if (current && nextBatches.some((batch) => batch.uploadId === current)) {
+          return current;
+        }
+        return nextBatches[0]?.uploadId || '';
+      });
     } catch {
       toast.error('Failed to load data');
     } finally {
@@ -80,7 +87,7 @@ export default function ClientDashboard() {
     onDrop,
     accept: { 'text/csv': ['.csv'], 'application/vnd.ms-excel': ['.xls'], 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
     maxFiles: 1,
-    disabled: uploading
+    disabled: uploading || !selectedBatch
   });
 
   const viewResult = async (result) => {
@@ -152,7 +159,7 @@ export default function ClientDashboard() {
             >
               <option value="">-- Select a GSTR2B batch --</option>
               {batches.map((b) => (
-                <option key={b.uploadId} value={b.uploadId}>
+                <option key={b.id || b.uploadId} value={b.uploadId}>
                   {b.returnPeriod || 'No period'} — {b.totalRecords} records — {new Date(b.createdAt).toLocaleDateString()}
                 </option>
               ))}

@@ -6,21 +6,44 @@ import { AppError } from '../middleware/error.middleware.js';
 // @access  Public
 export const register = async (req, res, next) => {
   try {
-    const { name, email, password, role, gstin, company } = req.body;
+    const {
+      name,
+      email,
+      password,
+      role,
+      gstin,
+      company
+    } = req.body;
 
-    if (!name || !email || !password) {
+    const normalizedName = name?.trim();
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedCompany = company?.trim() || undefined;
+    const normalizedGstin = gstin?.trim().toUpperCase() || undefined;
+
+    if (!normalizedName || !normalizedEmail || !password) {
       return next(new AppError('Name, email and password are required', 400));
     }
 
-    const existingUser = await User.findOne({ email });
+    if (!process.env.JWT_SECRET) {
+      return next(new AppError('JWT configuration is missing on the server', 500));
+    }
+
+    const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
       return next(new AppError('Email already registered', 400));
     }
 
-    // Only allow admin to create admin/officer accounts
-    const safeRole = ['client', 'admin', 'officer'].includes(role) ? role : 'client';
+    // Public registration should only create client accounts.
+    const safeRole = 'client';
 
-    const user = await User.create({ name, email, password, role: safeRole, gstin, company });
+    const user = await User.create({
+      name: normalizedName,
+      email: normalizedEmail,
+      password,
+      role: safeRole,
+      gstin: normalizedGstin,
+      company: normalizedCompany
+    });
     const token = user.generateToken();
 
     user.lastLogin = new Date();
@@ -49,10 +72,15 @@ export const register = async (req, res, next) => {
 // @access  Public
 export const login = async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const email = req.body.email?.trim().toLowerCase();
+    const { password } = req.body;
 
     if (!email || !password) {
       return next(new AppError('Email and password are required', 400));
+    }
+
+    if (!process.env.JWT_SECRET) {
+      return next(new AppError('JWT configuration is missing on the server', 500));
     }
 
     const user = await User.findOne({ email }).select('+password');

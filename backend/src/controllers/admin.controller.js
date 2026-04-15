@@ -36,8 +36,9 @@ export const uploadGSTR2B = async (req, res, next) => {
       .map(r => ({ ...r, uploadId, uploadedBy: req.user.id }));
 
     if (records.length === 0) {
+      const availableColumns = Object.keys(rows[0] || {}).join(', ');
       deleteFile(filePath);
-      return next(new AppError('No valid GSTR2B records found. Ensure columns include GSTIN and Invoice Number.', 400));
+      return next(new AppError(`No valid GSTR2B records found. Ensure columns include GSTIN and Invoice Number. Parsed columns: ${availableColumns || 'none'}`, 400));
     }
 
     await GSTR2BRecord.insertMany(records, { ordered: false });
@@ -47,6 +48,7 @@ export const uploadGSTR2B = async (req, res, next) => {
       success: true,
       message: `GSTR2B data uploaded successfully`,
       uploadId,
+      parsedRows: rows.length,
       totalRecords: records.length,
       fileName: req.file.originalname
     });

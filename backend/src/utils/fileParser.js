@@ -7,12 +7,100 @@ import csv from 'csv-parser';
 // ✅ Correct: import XLSX from 'xlsx'       → full API available
 import XLSX from 'xlsx';
 
+const pickFirst = (row, keys) => {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') {
+      return value;
+    }
+  }
+  return '';
+};
+
+const normalizeText = (value) => String(value ?? '').trim();
+const normalizeUpper = (value) => normalizeText(value).toUpperCase();
+
+const normalizeRow = (row) => {
+  const normalized = {};
+
+  for (const [key, value] of Object.entries(row || {})) {
+    const normalizedKey = normalizeKey(key);
+    normalized[normalizedKey] = value;
+  }
+
+  return normalized;
+};
+
+const extractInvoiceNumber = (value) => {
+  if (!value) return '';
+  if (typeof value === 'object') {
+    return normalizeUpper(
+      value.invoice_number ||
+      value.invoice_no ||
+      value.document_number ||
+      value.doc_no ||
+      value.number
+    );
+  }
+
+  const text = normalizeText(value);
+  if (!text) return '';
+
+  const focusedPatterns = [
+    /(?:invoice|inv)[^a-z0-9]{0,4}(?:number|no)?[^a-z0-9]{0,6}([a-z0-9][a-z0-9/_-]{2,})/i,
+    /(?:document|doc)[^a-z0-9]{0,4}(?:number|no)?[^a-z0-9]{0,6}([a-z0-9][a-z0-9/_-]{2,})/i
+  ];
+
+  for (const pattern of focusedPatterns) {
+    const match = text.match(pattern);
+    if (match?.[1] && !['NO', 'NUMBER'].includes(match[1].toUpperCase())) {
+      return normalizeUpper(match[1]);
+    }
+  }
+
+  const tokens = text.match(/[A-Z0-9][A-Z0-9/_-]{2,}/gi) || [];
+  const filtered = tokens.find((token) => !['INV', 'INVOICE', 'NO', 'NUMBER', 'DOC', 'DOCUMENT'].includes(token.toUpperCase()));
+  return filtered ? normalizeUpper(filtered) : normalizeUpper(text);
+};
+
+const parseAmount = (value) => {
+  if (value === undefined || value === null || value === '') return 0;
+  const cleaned = String(value).replace(/,/g, '').replace(/[^\d.-]/g, '');
+  const parsed = Number.parseFloat(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const parseDateValue = (value) => {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+
+  const normalized = normalizeText(value);
+  if (!normalized) return null;
+
+  const direct = new Date(normalized);
+  if (!Number.isNaN(direct.getTime())) return direct;
+
+  const match = normalized.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (!match) return null;
+
+  const [, dd, mm, yy] = match;
+  const year = yy.length === 2 ? `20${yy}` : yy;
+  const parsed = new Date(`${year}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+};
+
 /**
  * Normalize header keys to a standard lowercase underscored format.
  * Strips spaces, special chars → lowercase_underscore
  */
 const normalizeKey = (key) =>
-  String(key).trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '');
+  String(key)
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
 
 /**
  * Parse CSV file using streaming csv-parser.
@@ -79,22 +167,67 @@ export const parseFile = async (filePath) => {
  * Map raw parsed row to a GSTR2B record shape
  */
 export const mapToGSTR2B = (row) => {
-  const parse = (val) => parseFloat(String(val).replace(/,/g, '')) || 0;
+  const normalizedRow = normalizeRow(row);
+  const supplierGstin = normalizeUpper(pickFirst(row, [
+    'supplier_gstin', 'suppliergstin', 'gstin_of_supplier', 'gstinofsupplier',
+    'ctin', 'seller_gstin', 'vendor_gstin'
+  ])) || normalizeUpper(pickFirst(normalizedRow, [
+    'supplier_gstin', 'suppliergstin', 'gstin_of_supplier', 'gstinofsupplier',
+    'ctin', 'seller_gstin', 'vendor_gstin'
+  ]));
+  const gstin = normalizeUpper(pickFirst(row, [
+    'gstin', 'recipient_gstin', 'recipientgstin', 'buyer_gstin', 'customer_gstin',
+    'gstin_of_recipient', 'gstinofrecipient', 'gstin_uin_of_recipient',
+    'gstinuinofrecipient', 'gstinuin_of_recipient', 'gstin_uin',
+    'gstin_of_supplier', 'gstinofsupplier'
+  ])) || normalizeUpper(pickFirst(normalizedRow, [
+    'gstin', 'recipient_gstin', 'recipientgstin', 'buyer_gstin', 'customer_gstin',
+    'gstin_of_recipient', 'gstinofrecipient', 'gstin_uin_of_recipient',
+    'gstinuinofrecipient', 'gstinuin_of_recipient', 'gstin_uin',
+    'gstin_of_supplier', 'gstinofsupplier'
+  ])) || supplierGstin;
+  const taxableAmount = parseAmount(pickFirst(row, [
+    'taxable_amount', 'taxable_value', 'taxable_val', 'taxable_amt', 'taxable'
+  ])) || parseAmount(pickFirst(normalizedRow, [
+    'taxable_amount', 'taxable_value', 'taxable_val', 'taxable_amt', 'taxable'
+  ]));
+  const igst = parseAmount(pickFirst(row, ['igst', 'integrated_tax'])) || parseAmount(pickFirst(normalizedRow, ['igst', 'integrated_tax']));
+  const cgst = parseAmount(pickFirst(row, ['cgst', 'central_tax'])) || parseAmount(pickFirst(normalizedRow, ['cgst', 'central_tax']));
+  const sgst = parseAmount(pickFirst(row, ['sgst', 'state_tax', 'utgst', 'ut_tax'])) || parseAmount(pickFirst(normalizedRow, ['sgst', 'state_tax', 'utgst', 'ut_tax']));
+  const cess = parseAmount(pickFirst(row, ['cess', 'cess_amount'])) || parseAmount(pickFirst(normalizedRow, ['cess', 'cess_amount']));
+  const totalAmount = parseAmount(pickFirst(row, [
+    'total_amount', 'invoice_value', 'invoice_amount', 'total', 'total_value'
+  ])) || parseAmount(pickFirst(normalizedRow, [
+    'total_amount', 'invoice_value', 'invoice_amount', 'total', 'total_value'
+  ])) || (taxableAmount + igst + cgst + sgst + cess);
+
   return {
-    gstin: (row.gstin || row.recipient_gstin || row.buyer_gstin || '').toString().trim().toUpperCase(),
-    supplierGstin: (row.supplier_gstin || row.gstin_of_supplier || row.ctin || '').toString().trim().toUpperCase(),
-    supplierName: (row.supplier_name || row.trade_name || row.name || '').toString().trim(),
-    invoiceNumber: (row.invoice_number || row.invoice_no || row.inv_no || row.bill_no || '').toString().trim().toUpperCase(),
-    invoiceDate: row.invoice_date || row.inv_date || null,
-    invoiceType: (row.invoice_type || row.doc_type || 'B2B').toString().toUpperCase(),
-    taxableAmount: parse(row.taxable_amount || row.taxable_value || row.taxable || 0),
-    igst: parse(row.igst || row.integrated_tax || 0),
-    cgst: parse(row.cgst || row.central_tax || 0),
-    sgst: parse(row.sgst || row.state_tax || row.utgst || 0),
-    cess: parse(row.cess || 0),
-    totalAmount: parse(row.total_amount || row.invoice_value || row.total || row.total_value || 0),
-    returnPeriod: (row.return_period || row.ret_period || '').toString(),
-    rawData: row
+    gstin,
+    supplierGstin,
+    supplierName: normalizeText(pickFirst(row, [
+      'supplier_name', 'trade_name', 'legal_name', 'supplier_legal_name',
+      'supplier_trade_name', 'vendor_name', 'name'
+    ])) || normalizeText(pickFirst(normalizedRow, [
+      'supplier_name', 'trade_name', 'tradelegal_name', 'legal_name', 'supplier_legal_name',
+      'supplier_trade_name', 'vendor_name', 'name'
+    ])),
+    invoiceNumber: normalizeUpper(pickFirst(row, [
+      'invoice_number', 'invoice_no', 'invoice_no_', 'invoice_num', 'inv_no',
+      'bill_no', 'document_number', 'document_no', 'doc_no'
+    ])) || normalizeUpper(pickFirst(normalizedRow, [
+      'invoice_number', 'invoice_no', 'invoice_num', 'inv_no',
+      'bill_no', 'document_number', 'document_no', 'doc_no'
+    ])) || extractInvoiceNumber(pickFirst(normalizedRow, ['invoice_details'])),
+    invoiceDate: parseDateValue(pickFirst(row, ['invoice_date', 'inv_date', 'bill_date', 'document_date'])) || parseDateValue(pickFirst(normalizedRow, ['invoice_date', 'inv_date', 'bill_date', 'document_date', 'irn_date'])),
+    invoiceType: normalizeUpper(pickFirst(row, ['invoice_type', 'doc_type'])) || normalizeUpper(pickFirst(normalizedRow, ['invoice_type', 'doc_type'])) || 'B2B',
+    taxableAmount,
+    igst,
+    cgst,
+    sgst,
+    cess,
+    totalAmount,
+    returnPeriod: normalizeText(pickFirst(row, ['return_period', 'ret_period', 'returnperiod', 'tax_period'])) || normalizeText(pickFirst(normalizedRow, ['return_period', 'ret_period', 'returnperiod', 'tax_period'])),
+    rawData: normalizedRow
   };
 };
 
@@ -102,21 +235,59 @@ export const mapToGSTR2B = (row) => {
  * Map raw parsed row to a Purchase record shape
  */
 export const mapToPurchase = (row) => {
-  const parse = (val) => parseFloat(String(val).replace(/,/g, '')) || 0;
+  const normalizedRow = normalizeRow(row);
+  const supplierGstin = normalizeUpper(pickFirst(row, [
+    'supplier_gstin', 'vendor_gstin', 'party_gstin', 'seller_gstin',
+    'gstin_of_supplier', 'gstinofsupplier', 'ctin'
+  ])) || normalizeUpper(pickFirst(normalizedRow, [
+    'supplier_gstin', 'vendor_gstin', 'party_gstin', 'seller_gstin',
+    'gstin_of_supplier', 'gstinofsupplier', 'ctin'
+  ]));
+  const gstin = normalizeUpper(pickFirst(row, [
+    'gstin', 'buyer_gstin', 'recipient_gstin', 'recipientgstin', 'gstin_of_recipient',
+    'gstinofrecipient', 'gstin_of_supplier', 'gstinofsupplier', 'ctin'
+  ])) || normalizeUpper(pickFirst(normalizedRow, [
+    'gstin', 'buyer_gstin', 'recipient_gstin', 'recipientgstin', 'gstin_of_recipient',
+    'gstinofrecipient', 'gstin_of_supplier', 'gstinofsupplier', 'ctin'
+  ])) || supplierGstin;
+  const taxableAmount = parseAmount(pickFirst(row, [
+    'taxable_amount', 'taxable_value', 'taxable_val', 'taxable_amt', 'taxable'
+  ])) || parseAmount(pickFirst(normalizedRow, [
+    'taxable_amount', 'taxable_value', 'taxable_val', 'taxable_amt', 'taxable'
+  ]));
+  const taxAmount = parseAmount(pickFirst(normalizedRow, ['tax_amount']));
+  const igst = parseAmount(pickFirst(row, ['igst', 'integrated_tax'])) || parseAmount(pickFirst(normalizedRow, ['igst', 'integrated_tax']));
+  const cgst = parseAmount(pickFirst(row, ['cgst', 'central_tax'])) || parseAmount(pickFirst(normalizedRow, ['cgst', 'central_tax']));
+  const sgst = parseAmount(pickFirst(row, ['sgst', 'state_tax', 'utgst', 'ut_tax'])) || parseAmount(pickFirst(normalizedRow, ['sgst', 'state_tax', 'utgst', 'ut_tax']));
+  const cess = parseAmount(pickFirst(row, ['cess', 'cess_amount'])) || parseAmount(pickFirst(normalizedRow, ['cess', 'cess_amount']));
+  const totalAmount = parseAmount(pickFirst(row, [
+    'total_amount', 'invoice_value', 'invoice_amount', 'total', 'amount'
+  ])) || parseAmount(pickFirst(normalizedRow, [
+    'total_amount', 'invoice_value', 'invoice_amount', 'total', 'amount'
+  ])) || (taxableAmount + igst + cgst + sgst + cess + taxAmount);
+
   return {
-    gstin: (row.gstin || row.buyer_gstin || row.recipient_gstin || '').toString().trim().toUpperCase(),
-    supplierGstin: (row.supplier_gstin || row.vendor_gstin || row.party_gstin || '').toString().trim().toUpperCase(),
-    supplierName: (row.supplier_name || row.vendor_name || row.party_name || row.name || '').toString().trim(),
-    invoiceNumber: (row.invoice_number || row.invoice_no || row.bill_no || row.inv_no || '').toString().trim().toUpperCase(),
-    invoiceDate: row.invoice_date || row.bill_date || row.inv_date || null,
-    taxableAmount: parse(row.taxable_amount || row.taxable_value || row.taxable || 0),
-    igst: parse(row.igst || row.integrated_tax || 0),
-    cgst: parse(row.cgst || row.central_tax || 0),
-    sgst: parse(row.sgst || row.state_tax || 0),
-    cess: parse(row.cess || 0),
-    totalAmount: parse(row.total_amount || row.invoice_value || row.total || row.amount || 0),
-    description: (row.description || row.particulars || '').toString().trim(),
-    rawData: row
+    gstin,
+    supplierGstin,
+    supplierName: normalizeText(pickFirst(row, [
+      'supplier_name', 'vendor_name', 'party_name', 'supplier_trade_name', 'name'
+    ])) || normalizeText(pickFirst(normalizedRow, [
+      'supplier_name', 'vendor_name', 'party_name', 'supplier_trade_name', 'tradelegal_name', 'name'
+    ])),
+    invoiceNumber: normalizeUpper(pickFirst(row, [
+      'invoice_number', 'invoice_no', 'invoice_num', 'bill_no', 'inv_no', 'document_number'
+    ])) || normalizeUpper(pickFirst(normalizedRow, [
+      'invoice_number', 'invoice_no', 'invoice_num', 'bill_no', 'inv_no', 'document_number'
+    ])) || extractInvoiceNumber(pickFirst(normalizedRow, ['invoice_details'])),
+    invoiceDate: parseDateValue(pickFirst(row, ['invoice_date', 'bill_date', 'inv_date', 'document_date'])) || parseDateValue(pickFirst(normalizedRow, ['invoice_date', 'bill_date', 'inv_date', 'document_date', 'irn_date', 'irin_date'])),
+    taxableAmount,
+    igst,
+    cgst,
+    sgst,
+    cess,
+    totalAmount,
+    description: normalizeText(pickFirst(row, ['description', 'particulars', 'narration'])) || normalizeText(pickFirst(normalizedRow, ['description', 'particulars', 'narration', 'reason', 'source'])),
+    rawData: normalizedRow
   };
 };
 
