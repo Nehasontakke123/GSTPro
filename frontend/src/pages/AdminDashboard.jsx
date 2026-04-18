@@ -58,13 +58,13 @@ export default function AdminDashboard() {
     setUploading(true);
     setUploadProgress(0);
 
-    const fd = new FormData();
-    fd.append('file', file);
+    const formData = new FormData();
+    formData.append('file', file);
 
     try {
-      const res = await api.post('/admin/upload-gstr2b', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
+      const res = await api.post('/admin/upload-gstr2b', formData, {
         onUploadProgress: (e) => {
+          if (!e.total) return;
           setUploadProgress(Math.round((e.loaded * 90) / e.total));
         }
       });

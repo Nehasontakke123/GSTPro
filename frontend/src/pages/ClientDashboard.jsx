@@ -64,14 +64,16 @@ export default function ClientDashboard() {
     setUploading(true);
     setUploadProgress(0);
 
-    const fd = new FormData();
-    fd.append('file', file);
-    fd.append('gstr2bUploadId', selectedBatch);
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('gstr2bUploadId', selectedBatch);
 
     try {
-      const res = await api.post('/client/upload-purchase', fd, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-        onUploadProgress: (e) => setUploadProgress(Math.round((e.loaded * 85) / e.total))
+      const res = await api.post('/client/upload-purchase', formData, {
+        onUploadProgress: (e) => {
+          if (!e.total) return;
+          setUploadProgress(Math.round((e.loaded * 85) / e.total));
+        }
       });
       setUploadProgress(100);
       toast.success(`✅ Reconciliation complete! ${res.data.reconciliation.matchedCount} matched, ${res.data.reconciliation.unmatchedCount} unmatched.`);
