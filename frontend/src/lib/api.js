@@ -1,7 +1,12 @@
 import axios from 'axios';
 
-const apiHost = (import.meta.env.VITE_API_URL || '').replace(/\/+$/, '');
-const apiBaseUrl = apiHost ? `${apiHost}/api` : '/api';
+const configuredApiHost = (import.meta.env.VITE_API_URL || '').trim().replace(/\/+$/, '');
+
+if (import.meta.env.PROD && !configuredApiHost) {
+  console.error('Missing VITE_API_URL for production build. Falling back to relative /api requests.');
+}
+
+const apiBaseUrl = configuredApiHost ? `${configuredApiHost}/api` : '/api';
 
 const api = axios.create({
   baseURL: apiBaseUrl,
