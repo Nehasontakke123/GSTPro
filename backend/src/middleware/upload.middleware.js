@@ -1,31 +1,17 @@
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
-import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const storage = multer.memoryStorage();
 
-// Ensure upload directory exists
-const uploadDir = path.join(__dirname, '../../uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+const getFileExtension = (fileName = '') => {
+  const normalizedName = String(fileName).trim().toLowerCase();
+  const lastDotIndex = normalizedName.lastIndexOf('.');
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const subDir = path.join(uploadDir, req.user.role);
-    if (!fs.existsSync(subDir)) {
-      fs.mkdirSync(subDir, { recursive: true });
-    }
-    cb(null, subDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    const ext = path.extname(file.originalname);
-    cb(null, `${file.fieldname}-${uniqueSuffix}${ext}`);
+  if (lastDotIndex === -1) {
+    return '';
   }
-});
+
+  return normalizedName.slice(lastDotIndex);
+};
 
 const fileFilter = (req, file, cb) => {
   const allowedTypes = [
@@ -37,19 +23,20 @@ const fileFilter = (req, file, cb) => {
   ];
 
   const allowedExtensions = ['.csv', '.xlsx', '.xls'];
-  const ext = path.extname(file.originalname).toLowerCase();
+  const ext = getFileExtension(file.originalname);
 
   if (allowedTypes.includes(file.mimetype) || allowedExtensions.includes(ext)) {
     cb(null, true);
-  } else {
-    cb(new Error('Only CSV and Excel files are allowed (.csv, .xlsx, .xls)'), false);
+    return;
   }
+
+  cb(new Error('Only CSV and Excel files are allowed (.csv, .xlsx, .xls)'), false);
 };
 
 export const upload = multer({
   storage,
   fileFilter,
   limits: {
-    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024 // 10MB
+    fileSize: parseInt(process.env.MAX_FILE_SIZE) || 10 * 1024 * 1024
   }
 });

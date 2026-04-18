@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { getPurchaseRecordModel } from '../models/PurchaseRecord.model.js';
 import { getGSTR2BRecordModel } from '../models/GSTR2B.model.js';
 import { getReconciliationResultModel } from '../models/ReconciliationResult.model.js';
-import { parseFile, mapToPurchase, deleteFile, generateCSV } from '../utils/fileParser.js';
+import { parseFile, mapToPurchase, generateCSV } from '../utils/fileParser.js';
 import { reconcileRecords } from '../services/reconciliation.service.js';
 import { AppError } from '../middleware/error.middleware.js';
 
@@ -18,12 +18,16 @@ export const uploadPurchase = async (req, res, next) => {
         originalname: req.file.originalname,
         mimetype: req.file.mimetype,
         size: req.file.size,
-        path: req.file.path
+        bufferSize: req.file.buffer?.length || 0
       } : null);
     }
 
     if (!req.file) {
       return next(new AppError('Please upload a CSV or Excel file', 400));
+    }
+
+    if (!req.file.buffer?.length) {
+      return next(new AppError('Uploaded file is empty', 400));
     }
 
     const { gstr2bUploadId } = req.body;
@@ -37,18 +41,15 @@ export const uploadPurchase = async (req, res, next) => {
     }
 
     const uploadId = uuidv4();
-    const filePath = req.file.path;
 
     let rows;
     try {
-      rows = await parseFile(filePath);
+      rows = await parseFile(req.file);
     } catch (parseErr) {
-      deleteFile(filePath);
       return next(new AppError(`File parsing failed: ${parseErr.message}`, 400));
     }
 
     if (!rows || rows.length === 0) {
-      deleteFile(filePath);
       return next(new AppError('File is empty or has no valid data rows', 400));
     }
 
@@ -63,7 +64,6 @@ export const uploadPurchase = async (req, res, next) => {
 
     if (records.length === 0) {
       const availableColumns = Object.keys(rows[0] || {}).join(', ');
-      deleteFile(filePath);
       return next(new AppError(`No valid purchase records found. Ensure columns include GSTIN and Invoice Number. Parsed columns: ${availableColumns || 'none'}`, 400));
     }
 
@@ -83,7 +83,6 @@ export const uploadPurchase = async (req, res, next) => {
       reconciliation
     });
   } catch (error) {
-    if (req.file?.path) deleteFile(req.file.path);
     next(error);
   }
 };

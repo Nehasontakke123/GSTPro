@@ -1,6 +1,5 @@
-import fs from 'fs';
-import path from 'path';
 import csv from 'csv-parser';
+import { Readable } from 'stream';
 // ✅ FIX: xlsx is a CommonJS package. Use DEFAULT import (not namespace import)
 // so that readFile, utils, etc. are correctly bound in Node.js ESM.
 // ❌ Wrong:  import * as XLSX from 'xlsx'  → readFile is undefined
@@ -106,10 +105,21 @@ const normalizeKey = (key) =>
  * Parse CSV file using streaming csv-parser.
  * Returns Promise<Array<Object>>
  */
-export const parseCSV = (filePath) => {
+const getFileExtension = (fileName = '') => {
+  const normalizedName = String(fileName).trim().toLowerCase();
+  const lastDotIndex = normalizedName.lastIndexOf('.');
+
+  if (lastDotIndex === -1) {
+    return '';
+  }
+
+  return normalizedName.slice(lastDotIndex);
+};
+
+export const parseCSV = (fileBuffer) => {
   return new Promise((resolve, reject) => {
     const results = [];
-    fs.createReadStream(filePath)
+    Readable.from([fileBuffer])
       .pipe(csv({ mapHeaders: ({ header }) => normalizeKey(header) }))
       .on('data', (data) => results.push(data))
       .on('end', () => resolve(results))
@@ -121,10 +131,10 @@ export const parseCSV = (filePath) => {
  * Parse Excel file (.xlsx / .xls) using XLSX.readFile (Node.js only).
  * Returns Array<Object> with normalized headers.
  */
-export const parseExcel = (filePath) => {
+export const parseExcel = (fileBuffer) => {
   try {
     // XLSX.readFile reads from the filesystem — only works in Node.js (backend)
-    const workbook = XLSX.readFile(filePath, { cellDates: true, defval: '' });
+    const workbook = XLSX.read(fileBuffer, { type: 'buffer', cellDates: true, defval: '' });
 
     if (!workbook.SheetNames || workbook.SheetNames.length === 0) {
       throw new Error('Excel file contains no sheets');
@@ -154,10 +164,21 @@ export const parseExcel = (filePath) => {
  * Auto-detect file type by extension and parse accordingly.
  * Returns Promise<Array<Object>>
  */
-export const parseFile = async (filePath) => {
-  const ext = path.extname(filePath).toLowerCase();
-  if (ext === '.csv')                  return await parseCSV(filePath);
-  if (ext === '.xlsx' || ext === '.xls') return parseExcel(filePath);
+export const parseFile = async (fileInput, fileName) => {
+  const fileBuffer = Buffer.isBuffer(fileInput) ? fileInput : fileInput?.buffer;
+  const resolvedFileName = fileName || fileInput?.originalname || '';
+
+  if (!fileBuffer || fileBuffer.length === 0) {
+    throw new Error('Uploaded file buffer is empty');
+  }
+
+  if (!resolvedFileName) {
+    throw new Error('Uploaded file name is missing');
+  }
+
+  const ext = getFileExtension(resolvedFileName);
+  if (ext === '.csv') return parseCSV(fileBuffer);
+  if (ext === '.xlsx' || ext === '.xls') return parseExcel(fileBuffer);
   throw new Error(
     `Unsupported file format "${ext}". Only .csv, .xlsx, and .xls are accepted.`
   );
@@ -289,15 +310,6 @@ export const mapToPurchase = (row) => {
     description: normalizeText(pickFirst(row, ['description', 'particulars', 'narration'])) || normalizeText(pickFirst(normalizedRow, ['description', 'particulars', 'narration', 'reason', 'source'])),
     rawData: normalizedRow
   };
-};
-
-/**
- * Delete file from disk
- */
-export const deleteFile = (filePath) => {
-  if (fs.existsSync(filePath)) {
-    fs.unlinkSync(filePath);
-  }
 };
 
 /**

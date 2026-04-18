@@ -39,8 +39,6 @@ if (process.env.NODE_ENV === 'development') {
   app.use(morgan('dev'));
 }
 
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
-
 app.get('/api/health', (req, res) => {
   res.status(200).json({
     success: true,

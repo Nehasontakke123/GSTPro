@@ -2,6 +2,7 @@
  * Full parse test: CSV + XLSX → mapToGSTR2B + mapToPurchase
  * Run: node scripts/test-parser.js
  */
+import fs from 'fs';
 import XLSX from 'xlsx';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -25,8 +26,6 @@ const assert = (label, cond) => {
 // ─── 1. Create a real XLSX file on disk, then parse it back ─────────────────
 console.log('\n📑 Test 1: XLSX write → parseFile → mapToGSTR2B');
 
-const xlsxPath = path.join(__dirname, '../sample-data/test_parsing.xlsx');
-
 const wb = XLSX.utils.book_new();
 const wsData = [
   ['GSTIN', 'Invoice Number', 'Supplier GSTIN', 'Supplier Name', 'Taxable Amount', 'IGST', 'CGST', 'SGST', 'Total Amount', 'Return Period'],
@@ -36,11 +35,11 @@ const wsData = [
 ];
 const ws = XLSX.utils.aoa_to_sheet(wsData);
 XLSX.utils.book_append_sheet(wb, ws, 'GSTR2B');
-XLSX.writeFile(wb, xlsxPath);
-console.log(`  Written: ${xlsxPath}`);
+const xlsxBuffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+console.log('  Built XLSX buffer in memory');
 
 try {
-  const rows = await parseFile(xlsxPath);
+  const rows = await parseFile(xlsxBuffer, 'test_parsing.xlsx');
   assert('XLSX parsed without error', rows.length > 0);
   assert('Row count matches', rows.length === 3);
 
@@ -61,7 +60,8 @@ console.log('\n📄 Test 2: CSV parseFile → mapToGSTR2B');
 
 try {
   const csvPath = path.join(__dirname, '../sample-data/sample_gstr2b.csv');
-  const rows = await parseFile(csvPath);
+  const csvBuffer = fs.readFileSync(csvPath);
+  const rows = await parseFile(csvBuffer, path.basename(csvPath));
   assert('CSV parsed without error', rows.length > 0);
   assert('8 rows in sample GSTR2B', rows.length === 8);
 
@@ -79,7 +79,8 @@ console.log('\n📄 Test 3: CSV parseFile → mapToPurchase');
 
 try {
   const csvPath = path.join(__dirname, '../sample-data/sample_purchase.csv');
-  const rows = await parseFile(csvPath);
+  const csvBuffer = fs.readFileSync(csvPath);
+  const rows = await parseFile(csvBuffer, path.basename(csvPath));
   assert('Purchase CSV parsed', rows.length > 0);
 
   const mapped = rows.map(mapToPurchase);
@@ -94,7 +95,7 @@ try {
 console.log('\n🚫 Test 4: Unsupported file type throws');
 
 try {
-  await parseFile('/some/file.pdf');
+  await parseFile(Buffer.from('demo'), 'some-file.pdf');
   assert('Should have thrown for .pdf', false);
 } catch (err) {
   assert('Throws on .pdf', err.message.includes('Unsupported file format'));

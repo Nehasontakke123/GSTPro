@@ -3,7 +3,7 @@ import { getGSTR2BRecordModel } from '../models/GSTR2B.model.js';
 import { getPurchaseRecordModel } from '../models/PurchaseRecord.model.js';
 import { getReconciliationResultModel } from '../models/ReconciliationResult.model.js';
 import { getUserModel } from '../models/User.model.js';
-import { parseFile, mapToGSTR2B, deleteFile } from '../utils/fileParser.js';
+import { parseFile, mapToGSTR2B } from '../utils/fileParser.js';
 import { AppError } from '../middleware/error.middleware.js';
 
 export const uploadGSTR2B = async (req, res, next) => {
@@ -17,7 +17,7 @@ export const uploadGSTR2B = async (req, res, next) => {
         originalname: req.file.originalname,
         mimetype: req.file.mimetype,
         size: req.file.size,
-        path: req.file.path
+        bufferSize: req.file.buffer?.length || 0
       } : null);
     }
 
@@ -25,19 +25,20 @@ export const uploadGSTR2B = async (req, res, next) => {
       return next(new AppError('Please upload a CSV or Excel file', 400));
     }
 
+    if (!req.file.buffer?.length) {
+      return next(new AppError('Uploaded file is empty', 400));
+    }
+
     const uploadId = uuidv4();
-    const filePath = req.file.path;
 
     let rows;
     try {
-      rows = await parseFile(filePath);
+      rows = await parseFile(req.file);
     } catch (parseErr) {
-      deleteFile(filePath);
       return next(new AppError(`File parsing failed: ${parseErr.message}`, 400));
     }
 
     if (!rows || rows.length === 0) {
-      deleteFile(filePath);
       return next(new AppError('File is empty or has no valid data rows', 400));
     }
 
@@ -48,7 +49,6 @@ export const uploadGSTR2B = async (req, res, next) => {
 
     if (records.length === 0) {
       const availableColumns = Object.keys(rows[0] || {}).join(', ');
-      deleteFile(filePath);
       return next(new AppError(`No valid GSTR2B records found. Ensure columns include GSTIN and Invoice Number. Parsed columns: ${availableColumns || 'none'}`, 400));
     }
 
@@ -63,7 +63,6 @@ export const uploadGSTR2B = async (req, res, next) => {
       fileName: req.file.originalname
     });
   } catch (error) {
-    if (req.file?.path) deleteFile(req.file.path);
     next(error);
   }
 };
