@@ -20,17 +20,53 @@ dotenv.config({ path: path.join(__dirname, '../.env') });
 
 const app = express();
 const PORT = process.env.PORT || 8000;
+const DEFAULT_FRONTEND_ORIGIN = 'https://gst-pro-opal.vercel.app';
+
+const normalizeOrigin = (origin = '') => origin.trim().replace(/\/+$/, '');
+
+const allowedOrigins = Array.from(
+  new Set(
+    [
+      DEFAULT_FRONTEND_ORIGIN,
+      ...(process.env.NODE_ENV !== 'production' ? ['http://localhost:5173', 'http://localhost:3000'] : []),
+      ...(process.env.FRONTEND_URL || '')
+        .split(',')
+        .map(normalizeOrigin)
+        .filter(Boolean)
+    ]
+  )
+);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    const normalizedOrigin = normalizeOrigin(origin);
+
+    if (allowedOrigins.includes(normalizedOrigin)) {
+      callback(null, true);
+      return;
+    }
+
+    const corsError = new Error(`Origin ${normalizedOrigin} is not allowed by CORS`);
+    corsError.statusCode = 403;
+    callback(corsError);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+  optionsSuccessStatus: 204
+};
 
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' }
 }));
 
-app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:3000', process.env.FRONTEND_URL].filter(Boolean),
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
